@@ -3,6 +3,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 module Level06.AppM where
 
+import           Control.Applicative    (liftA2)
 import           Control.Monad.Except   (MonadError (..))
 import           Control.Monad.IO.Class (MonadIO (..))
 
@@ -19,10 +20,10 @@ import           Data.Bifunctor         (first)
 -- To do this we will create a newtype `AppM` that is a shorthand way of
 -- describing the return type of a function that may contain an error.
 --
--- This will work in the same manner as the Functor/Applicative/Monad
+-- Our `AppM` type will work in the same manner as the Functor/Applicative/Monad
 -- instances for Either, with functions being applied to the Right value and
 -- everything been ignored if a Left value is encountered, returning that Left
--- value.
+-- value. With the added bonus of allowing us to perform `IO` actions!
 --
 -- f <$> (Left e)  = Left e
 -- f <$> (Right a) = Right (f a)
@@ -38,48 +39,67 @@ import           Data.Bifunctor         (first)
 --   either (pure . Left) needsAButMightFail aE
 --   where
 --     mightFail :: IO (Either Error Int)
---     alsoMightFail :: Int -> IO (Either Error Value)
+--     needsAButMightFail :: Int -> IO (Either Error Value)
 --
 -- We can wrap our functions with AppM and we can work directly with the
 -- values we expect to appear on the happy path, knowing that if the sad path is
 -- encountered, the structure of our AppM will automatically handle it for us.
 
 newtype AppM a = AppM (IO (Either Error a))
+-- This structure allows us to start writing our functions in terms of
+-- constraints. As an example, if we wanted to abstract over IO and indicate
+-- that instead of the concrete type we wanted a constraint that allows for IO
+-- actions. Our AppM would look more like this:
+--
+-- AppM m a = AppM ( m (Either Error a) )
+--
+-- Then our functions would look like:
+--
+-- foo :: MonadIO m => Int -> AppM m a
+--
+-- Or we could not use a concrete type for Error
+--
+-- AppM e m a = AppM ( m (Either e a) )
 
-runAppM
-  :: AppM a
-  -> IO (Either Error a)
-runAppM (AppM m) =
-  m
+runAppM :: AppM a -> IO (Either Error a)
+runAppM (AppM m) = m
 
 instance Functor AppM where
   fmap :: (a -> b) -> AppM a -> AppM b
-  fmap = error "fmap for AppM not implemented"
+  fmap f (AppM m) = AppM (((<$>) f) <$> m)
 
 instance Applicative AppM where
   pure :: a -> AppM a
-  pure  = error "pure for AppM not implemented"
+  pure a = AppM (pure $ pure a)
 
   (<*>) :: AppM (a -> b) -> AppM a -> AppM b
-  (<*>) = error "ap for AppM not implemented"
+  (<*>) (AppM f) (AppM a) = AppM $ liftA2 (<*>) f a
 
 instance Monad AppM where
   return :: a -> AppM a
-  return = error "return for AppM not implemented"
+  return a = AppM (return $ Right a)
 
   (>>=) :: AppM a -> (a -> AppM b) -> AppM b
-  (>>=)  = error "bind for AppM not implemented"
+  (>>=) a f = AppM $ do
+    a' <- runAppM a
+    case a' of
+      Left err -> return $ Left err
+      Right val -> runAppM $ f val
 
 instance MonadIO AppM where
   liftIO :: IO a -> AppM a
-  liftIO = error "liftIO for AppM not implemented"
+  liftIO a = AppM ((<$>) Right a)
 
 instance MonadError Error AppM where
   throwError :: Error -> AppM a
-  throwError = error "throwError for AppM not implemented"
+  throwError e = AppM (return $ Left e)
 
   catchError :: AppM a -> (Error -> AppM a) -> AppM a
-  catchError = error "catchError for AppM not implemented"
+  catchError a f = AppM $ do
+    a' <- runAppM a
+    case a' of
+      Left err -> runAppM $ f err
+      Right val -> return $ Right val
 
 -- This is a helper function that will `lift` an Either value into our new AppM
 -- by applying `throwError` to the Left value, and using `pure` to lift the
@@ -88,8 +108,7 @@ instance MonadError Error AppM where
 -- throwError :: MonadError e m => e -> m a
 -- pure :: Applicative m => a -> m a
 --
-liftEither
-  :: Either Error a
-  -> AppM a
-liftEither =
-  error "throwLeft not implemented"
+liftEither :: Either Error a -> AppM a
+liftEither a = AppM (return a)
+
+-- Go to 'src/Level05/DB.hs' next.

@@ -6,11 +6,13 @@ module Level04.Core
   ) where
 
 import           Control.Applicative                (liftA2)
+import           Control.Exception                  (bracket)
 import           Control.Monad                      (join)
 
 import           Network.Wai                        (Application, Request,
-                                                     Response, pathInfo,
-                                                     requestMethod, responseLBS,
+                                                     Response, ResponseReceived,
+                                                     pathInfo, requestMethod,
+                                                     responseLBS,
                                                      strictRequestBody)
 import           Network.Wai.Handler.Warp           (run)
 
@@ -18,6 +20,7 @@ import           Network.HTTP.Types                 (Status, hContentType,
                                                      status200, status400,
                                                      status404, status500)
 
+import qualified Data.Bifunctor                     as B
 import qualified Data.ByteString.Lazy.Char8         as LBS
 
 import           Data.Either                        (Either (Left, Right),
@@ -32,10 +35,10 @@ import qualified Data.Aeson                         as A
 
 import           Database.SQLite.SimpleErrors.Types (SQLiteResponse)
 
-import           Level04.Conf                       (Conf, firstAppConfig)
+import           Level04.Conf                       (Conf (..), firstAppConfig)
 import qualified Level04.DB                         as DB
 import           Level04.Types                      (ContentType (JSON, PlainText),
-                                                     Error (EmptyCommentText, EmptyTopic, UnknownRoute),
+                                                     Error (..),
                                                      RqType (AddRq, ListRq, ViewRq),
                                                      mkCommentText, mkTopic,
                                                      renderContentType)
@@ -48,7 +51,10 @@ data StartUpError
   deriving Show
 
 runApp :: IO ()
-runApp = error "runApp needs re-implementing"
+runApp = bracket
+  prepareAppReqs
+  (either (const $ putStrLn "DB Error") DB.closeDB)
+  (either (const $ putStrLn "DB Error") (\x -> run 8080 (app x)))
 
 -- We need to complete the following steps to prepare our app requirements:
 --
@@ -57,55 +63,29 @@ runApp = error "runApp needs re-implementing"
 --
 -- Our application configuration is defined in Conf.hs
 --
-prepareAppReqs
-  :: IO ( Either StartUpError DB.FirstAppDB )
-prepareAppReqs =
-  error "prepareAppReqs not implemented"
+prepareAppReqs :: IO ( Either StartUpError DB.FirstAppDB )
+prepareAppReqs = B.first DBInitErr <$> DB.initDB f
+  where f = dbFilePath firstAppConfig
 
 -- | Some helper functions to make our lives a little more DRY.
-mkResponse
-  :: Status
-  -> ContentType
-  -> LBS.ByteString
-  -> Response
-mkResponse sts ct =
-  responseLBS sts [(hContentType, renderContentType ct)]
+mkResponse :: Status -> ContentType -> LBS.ByteString -> Response
+mkResponse sts ct = responseLBS sts [(hContentType, renderContentType ct)]
 
-resp200
-  :: ContentType
-  -> LBS.ByteString
-  -> Response
-resp200 =
-  mkResponse status200
+resp200 :: ContentType -> LBS.ByteString -> Response
+resp200 = mkResponse status200
 
-resp404
-  :: ContentType
-  -> LBS.ByteString
-  -> Response
-resp404 =
-  mkResponse status404
+resp404 :: ContentType -> LBS.ByteString -> Response
+resp404 = mkResponse status404
 
-resp400
-  :: ContentType
-  -> LBS.ByteString
-  -> Response
-resp400 =
-  mkResponse status400
+resp400 :: ContentType -> LBS.ByteString -> Response
+resp400 = mkResponse status400
 
 -- Some new helpers for different statuses and content types
-resp500
-  :: ContentType
-  -> LBS.ByteString
-  -> Response
-resp500 =
-  mkResponse status500
+resp500 :: ContentType -> LBS.ByteString -> Response
+resp500 = mkResponse status500
 
-resp200Json
-  :: ToJSON a
-  => a
-  -> Response
-resp200Json =
-  mkResponse status200 JSON . A.encode
+resp200Json :: ToJSON a => a -> Response
+resp200Json = mkResponse status200 JSON . A.encode
 
 -- |
 app
@@ -124,16 +104,10 @@ app db rq cb = do
     handleRErr :: Either Error RqType -> IO (Either Error Response)
     handleRErr = either ( pure . Left ) ( handleRequest db )
 
-handleRequest
-  :: DB.FirstAppDB
-  -> RqType
-  -> IO (Either Error Response)
-handleRequest _db (AddRq _ _) =
-  (resp200 PlainText "Success" <$) <$> error "AddRq handler not implemented"
-handleRequest _db (ViewRq _)  =
-  error "ViewRq handler not implemented"
-handleRequest _db ListRq      =
-  error "ListRq handler not implemented"
+handleRequest :: DB.FirstAppDB -> RqType -> IO (Either Error Response)
+handleRequest _db (AddRq t m) = B.second (const $ resp200 PlainText "Success") <$> (DB.addCommentToTopic _db t m)
+handleRequest _db (ViewRq t)  = B.second resp200Json  <$> (DB.getComments _db t)
+handleRequest _db ListRq      = B.second resp200Json <$> (DB.getTopics _db)
 
 mkRequest
   :: Request
@@ -168,12 +142,9 @@ mkListRequest
 mkListRequest =
   Right ListRq
 
-mkErrorResponse
-  :: Error
-  -> Response
-mkErrorResponse UnknownRoute =
-  resp404 PlainText "Unknown Route"
-mkErrorResponse EmptyCommentText =
-  resp400 PlainText "Empty Comment"
-mkErrorResponse EmptyTopic =
-  resp400 PlainText "Empty Topic"
+mkErrorResponse :: Error -> Response
+mkErrorResponse UnknownRoute     = resp404 PlainText "Unknown Route"
+mkErrorResponse EmptyCommentText = resp400 PlainText "Empty Comment"
+mkErrorResponse EmptyTopic       = resp400 PlainText "Empty Topic"
+mkErrorResponse NotFound         = resp400 PlainText "Not found"
+mkErrorResponse _ = resp400 PlainText "SQLiteError "

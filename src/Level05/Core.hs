@@ -6,7 +6,9 @@ module Level05.Core
   , prepareAppReqs
   ) where
 
+import           Control.Monad.Except               (MonadError (..))
 import           Control.Monad.IO.Class             (liftIO)
+import           Control.Monad.IO.Class             (MonadIO (..))
 
 import           Network.Wai                        (Application, Request,
                                                      Response, pathInfo,
@@ -31,6 +33,8 @@ import           Database.SQLite.SimpleErrors.Types (SQLiteResponse)
 import           Data.Aeson                         (ToJSON)
 import qualified Data.Aeson                         as A
 
+import qualified Data.Bifunctor                     as B
+
 import           Level05.AppM                       (AppM, liftEither, runAppM)
 import qualified Level05.Conf                       as Conf
 import qualified Level05.DB                         as DB
@@ -53,8 +57,8 @@ runApp = do
   cfgE <- prepareAppReqs
   -- Loading the configuration can fail, so we have to take that into account now.
   case cfgE of
-    Left err   -> undefined
-    Right _cfg -> run undefined undefined
+    Left err   -> putStrLn $ show err
+    Right _cfg -> run 8080 (app _cfg)
 
 -- We need to complete the following steps to prepare our app requirements:
 --
@@ -63,10 +67,9 @@ runApp = do
 --
 -- Our application configuration is defined in Conf.hs
 --
-prepareAppReqs
-  :: IO ( Either StartUpError DB.FirstAppDB )
-prepareAppReqs =
-  error "copy your prepareAppReqs from the previous level."
+prepareAppReqs :: IO ( Either StartUpError DB.FirstAppDB )
+prepareAppReqs = B.first DBInitErr <$> DB.initDB f
+  where f = Conf.dbFilePath Conf.firstAppConfig
 
 -- | Some helper functions to make our lives a little more DRY.
 mkResponse
@@ -115,11 +118,15 @@ resp200Json =
 
 -- How has this implementation changed, now that we have an AppM to handle the
 -- errors for our application? Could it be simplified? Can it be changed at all?
-app
-  :: DB.FirstAppDB
-  -> Application
-app db rq cb =
-  error "app not reimplemented"
+app :: DB.FirstAppDB -> Application
+app db rq cb = do
+  a <- runAppM $ do
+    rq' <- mkRequest rq
+    handleRequest db rq'
+
+  case a of
+    Right val -> cb val
+    Left err -> cb $ mkErrorResponse err
 
 handleRequest
   :: DB.FirstAppDB

@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Level07.DB
+module Level08.DB
   ( FirstAppDB (FirstAppDB)
   , initDB
   , closeDB
@@ -9,6 +9,7 @@ module Level07.DB
   , deleteTopic
   ) where
 
+import           Control.Lens
 import           Control.Monad.IO.Class             (liftIO)
 import           Control.Monad.Reader               (asks)
 
@@ -25,10 +26,11 @@ import qualified Database.SQLite.Simple             as Sql
 import qualified Database.SQLite.SimpleErrors       as Sql
 import           Database.SQLite.SimpleErrors.Types (SQLiteResponse)
 
-import           Level07.AppM                       (AppM, Env (envDB),
+import           Level08.AppM                       (AppM, AsAppM, Env (envDB),
+                                                     HasConf (..), HasEnv (..), HasFirstAppDB (..),
                                                      liftEither)
 
-import           Level07.Types                      (Comment, CommentText,
+import           Level08.Types                      (Comment, CommentText,
                                                      DBFilePath (getDBFilePath),
                                                      Error (DBError),
                                                      FirstAppDB (FirstAppDB, dbConn),
@@ -59,17 +61,17 @@ initDB fp = Sql.runDBAction $ do
     createTableQ =
       "CREATE TABLE IF NOT EXISTS comments (id INTEGER PRIMARY KEY, topic TEXT, comment TEXT, time INTEGER)"
 
-getDBConn :: AppM Connection
-getDBConn = asks (dbConn . envDB)
+getDBConn :: (AsAppM e c m) => m Connection
+getDBConn = view (envdb . dbconn)
 
 
-runDB :: (a -> Either Error b) -> (Connection -> IO a) -> AppM b
+runDB :: (AsAppM e c m) => (a -> Either e b) -> (Connection -> IO a) -> m b
 runDB handleResp handleReq = do
   conn <- getDBConn
   req <- liftIO $ handleReq conn
   liftEither $ handleResp req
 
-getComments :: Topic -> AppM [Comment]
+getComments :: (AsAppM e c m) => Topic -> m [Comment]
 getComments t = do
   -- Write the query with an icky string and remember your placeholders!
   let q = "SELECT id,topic,comment,time FROM comments WHERE topic = ?"
@@ -78,7 +80,7 @@ getComments t = do
   -- outside world. Checking again for things like empty Topic or CommentText values.
   runDB (traverse fromDBComment) (\conn -> Sql.query conn q (Sql.Only . getTopic $ t))
 
-addCommentToTopic :: Topic -> CommentText -> AppM ()
+addCommentToTopic :: (AsAppM e c m) => Topic -> CommentText -> m ()
 addCommentToTopic t c = do
   nowish <- liftIO getCurrentTime
   -- Note the triple, matching the number of values we're trying to insert, plus
@@ -95,16 +97,16 @@ addCommentToTopic t c = do
   -- An alternative is to write a returning query to get the Id of the DBComment
   -- we've created. We're being lazy (hah!) for now, so assume awesome and move on.
 
-getTopics :: AppM [Topic]
+getTopics :: (AsAppM e c m) => m [Topic]
 getTopics =
   let q = "SELECT DISTINCT topic FROM comments"
   in
     runDB (traverse ( mkTopic . Sql.fromOnly )) $ (\conn -> Sql.query_ conn q)
 
-deleteTopic :: Topic -> AppM ()
-deleteTopic t = 
+deleteTopic :: (AsAppM e c m) => Topic -> m ()
+deleteTopic t =
   let q = "DELETE FROM comments WHERE topic = ?"
   in
     runDB Right $ (\conn -> Sql.execute conn q (Sql.Only . getTopic $ t))
 
--- Go on to 'src/Level07/Core.hs' next.
+-- Go on to 'src/Level08/Core.hs' next.

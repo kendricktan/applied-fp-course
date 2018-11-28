@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Level07.Core
+module Level08.Core
   ( runApp
   , prepareAppReqs
   , app
@@ -8,6 +8,7 @@ module Level07.Core
 import           Control.Applicative                (liftA2)
 import           Control.Monad                      (join)
 
+import           Control.Monad.Error.Lens           (throwing_)
 import           Control.Monad.Except               (throwError)
 import           Control.Monad.IO.Class             (liftIO)
 import           Control.Monad.Reader               (asks)
@@ -33,11 +34,12 @@ import           Database.SQLite.SimpleErrors.Types (SQLiteResponse)
 
 import           System.IO                          (stderr)
 
-import qualified Level07.Conf                       as Conf
-import qualified Level07.DB                         as DB
+import qualified Level08.Conf                       as Conf
+import qualified Level08.DB                         as DB
 
-import qualified Level07.Responses                  as Res
-import           Level07.Types                      (Conf (..), ConfigError,
+import qualified Level08.Responses                  as Res
+import Level08.Types.Error (AsError (..))
+import           Level08.Types                      (Conf (..), ConfigError,
                                                      ContentType (PlainText),
                                                      Error (DBError, EmptyCommentText, EmptyTopic, UnknownRoute),
                                                      RqType (AddRq, ListRq, ViewRq),
@@ -45,7 +47,7 @@ import           Level07.Types                      (Conf (..), ConfigError,
                                                      getDBFilePath,
                                                      mkCommentText, mkTopic)
 
-import           Level07.AppM                       (AppM, Env (Env, envConfig, envDB, envLoggingFn),
+import           Level08.AppM                       (AppM, AsAppM, Env (Env, envConfig, envDB, envLoggingFn),
                                                      defaultEnvLogger,
                                                      liftEither, runAppM)
 
@@ -87,7 +89,7 @@ prepareAppReqs = runExceptT $ do
           Left err         -> throwError $ DBInitErr err
           Right firstappdb ->  return $ Env defaultEnvLogger conf firstappdb
 
---  eitherConfg <- Conf.parseOptions "files/level07.json"
+--  eitherConfg <- Conf.parseOptions "files/Level08.json"
 --  case eitherConfg of
 --    Left err  -> return $ Left (ConfigError err)
 --    Right conf -> do
@@ -107,26 +109,17 @@ app env rq cb = do
     rq' <- mkRequest rq
     handleRequest rq') env
   case a of
-    Left err -> cb $ mkErrorResponse err
+    Left err  -> cb $ mkErrorResponse err
     Right val -> cb val
 
 
---   runAppM ((handleRequest =<< mkRequest rq) >>= cb . handleRespErr) env
---   where
---     handleRespErr :: Either Error Response -> Response
---     handleRespErr = either mkErrorResponse id
-
-handleRequest
-  :: RqType
-  -> AppM Response
+handleRequest :: (AsAppM e c m) => RqType -> m Response
 handleRequest rqType = case rqType of
   AddRq t c -> Res.resp200 PlainText "Success" <$ DB.addCommentToTopic t c
   ViewRq t  -> Res.resp200Json <$> DB.getComments t
   ListRq    -> Res.resp200Json <$> DB.getTopics
 
-mkRequest
-  :: Request
-  -> AppM RqType
+mkRequest :: (AsAppM e c m) => Request -> m RqType
 mkRequest rq =
   liftEither =<< case ( pathInfo rq, requestMethod rq ) of
     -- Commenting on a given topic
@@ -136,36 +129,22 @@ mkRequest rq =
     -- List the current topics
     ( ["list"], "GET" )    -> pure mkListRequest
     -- Finally we don't care about any other requests so throw your hands in the air
-    _                      -> pure ( Left UnknownRoute )
+    _                      -> pure ( throwing_ _UnknownRoute )
 
-mkAddRequest
-  :: Text
-  -> LBS.ByteString
-  -> Either Error RqType
+mkAddRequest :: (AsError e) => Text -> LBS.ByteString -> Either e RqType
 mkAddRequest ti c = AddRq
   <$> mkTopic ti
   <*> (mkCommentText . decodeUtf8 . LBS.toStrict) c
 
-mkViewRequest
-  :: Text
-  -> Either Error RqType
-mkViewRequest =
-  fmap ViewRq . mkTopic
+mkViewRequest :: (AsError e) => Text -> Either e RqType
+mkViewRequest = fmap ViewRq . mkTopic
 
-mkListRequest
-  :: Either Error RqType
-mkListRequest =
-  Right ListRq
+mkListRequest :: (AsError e) => Either e RqType
+mkListRequest = Right ListRq
 
-mkErrorResponse
-  :: Error
-  -> Response
-mkErrorResponse UnknownRoute     =
-  Res.resp404 PlainText "Unknown Route"
-mkErrorResponse EmptyCommentText =
-  Res.resp400 PlainText "Empty Comment"
-mkErrorResponse EmptyTopic       =
-  Res.resp400 PlainText "Empty Topic"
-mkErrorResponse ( DBError _ )    =
+mkErrorResponse :: Error -> Response
+mkErrorResponse UnknownRoute     = Res.resp404 PlainText "Unknown Route"
+mkErrorResponse EmptyCommentText = Res.resp400 PlainText "Empty Comment"
+mkErrorResponse EmptyTopic       = Res.resp400 PlainText "Empty Topic"
+mkErrorResponse ( DBError _ )    = Res.resp500 PlainText "OH NOES"
   -- Be a sensible developer and don't leak your DB errors over the internet.
-  Res.resp500 PlainText "OH NOES"

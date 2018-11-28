@@ -47,9 +47,7 @@ closeDB
 closeDB =
   Sql.close . dbConn
 
-initDB
-  :: FilePath
-  -> IO ( Either SQLiteResponse FirstAppDB )
+initDB :: FilePath -> IO ( Either SQLiteResponse FirstAppDB )
 initDB fp = Sql.runDBAction $ do
   -- Initialise the connection to the DB...
   -- - What could go wrong here?

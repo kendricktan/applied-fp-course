@@ -25,34 +25,17 @@ runApp :: IO ()
 runApp = run 3000 app
 
 -- | Some helper functions to make our lives a little more DRY.
-mkResponse
-  :: Status
-  -> ContentType
-  -> LBS.ByteString
-  -> Response
-mkResponse sts ct =
-  responseLBS sts [(hContentType, renderContentType ct)]
+mkResponse :: Status -> ContentType -> LBS.ByteString -> Response
+mkResponse sts ct = responseLBS sts [(hContentType, renderContentType ct)]
 
-resp200
-  :: ContentType
-  -> LBS.ByteString
-  -> Response
-resp200 =
-  mkResponse status200
+resp200 :: ContentType -> LBS.ByteString -> Response
+resp200 = mkResponse status200
 
-resp404
-  :: ContentType
-  -> LBS.ByteString
-  -> Response
-resp404 =
-  mkResponse status404
+resp404 :: ContentType -> LBS.ByteString -> Response
+resp404 = mkResponse status404
 
-resp400
-  :: ContentType
-  -> LBS.ByteString
-  -> Response
-resp400 =
-  mkResponse status400
+resp400 :: ContentType -> LBS.ByteString -> Response
+resp400 = mkResponse status400
 -- |
 
 app :: Application

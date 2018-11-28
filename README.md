@@ -126,6 +126,16 @@ instructions about what the goal is for that specific level.
 -- Coming Soon...
 * Level 08 : (Bonus Round) Lenses & Refactoring
 
+1) Reimplement AppM with ReaderT and ExceptT. You may use GeneralizedNewTypeDeriving tomake this easier.
+
+2) Define Prisms and 'AsError' typeclass for 'Error' type
+
+import Control.Lens (Prism', prism')
+
+class AsError s where
+  _Error ::Prism's Error
+
+
 -- Maybe...
 * Level 09 : Add session controls (login, logout) and a protected route. So we
   can have something that resembles application state. For the purposes of

@@ -1,14 +1,14 @@
-{-# LANGUAGE OverloadedStrings          #-}
-{-# OPTIONS_GHC -fno-warn-missing-methods #-}
 {-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-module Level06.Types
+{-# LANGUAGE OverloadedStrings          #-}
+module Level08.Types
   ( Error (..)
   , ConfigError (..)
   , PartialConf (..)
   , Port (..)
   , DBFilePath (..)
   , Conf (..)
+  , FirstAppDB (..)
   , RqType (..)
   , ContentType (..)
   , Comment (..)
@@ -19,40 +19,44 @@ module Level06.Types
   , mkCommentText
   , getCommentText
   , renderContentType
-  , confPortToWai
   , fromDBComment
+  , confPortToWai
   ) where
+
+import           System.IO.Error                    (IOError)
 
 import           GHC.Generics                       (Generic)
 import           GHC.Word                           (Word16)
 
-import           Control.Exception                  (Exception (..))
-
 import           Data.ByteString                    (ByteString)
 import           Data.Text                          (Text)
 
-import           System.IO.Error                    (IOError)
-
-import           Data.Monoid                        (Last (..),
-                                                     Monoid (mappend, mempty))
-import           Data.Semigroup                     (Semigroup ((<>)))
-
 import           Data.List                          (stripPrefix)
 import           Data.Maybe                         (fromMaybe)
-import           Data.Time                          (UTCTime)
+import           Data.Monoid                        (Last (Last))
+import           Data.Semigroup                     (Semigroup ((<>)))
 
 import           Data.Aeson                         (FromJSON (..), ToJSON,
-                                                     withObject, (.:), (.:?))
+                                                     (.:?))
 import qualified Data.Aeson                         as A
 import qualified Data.Aeson.Types                   as A
 
+import           Data.Time                          (UTCTime)
+
+import           Database.SQLite.Simple             (Connection)
 import           Database.SQLite.SimpleErrors.Types (SQLiteResponse)
-import           Level06.DB.Types                   (DBComment (dbCommentComment, dbCommentId, dbCommentTime, dbCommentTopic))
-import           Level06.Types.CommentText          (CommentText,
-                                                     getCommentText,
-                                                     mkCommentText)
-import           Level06.Types.Error                (Error (DBError, EmptyCommentText, EmptyTopic, UnknownRoute))
-import           Level06.Types.Topic                (Topic, getTopic, mkTopic)
+
+import           Level08.DB.Types                  (DBComment (dbCommentComment, dbCommentId, dbCommentTime, dbCommentTopic))
+import           Level08.Types.Error               (Error ( UnknownRoute
+                                                           , EmptyCommentText
+                                                           , EmptyTopic
+                                                           , DBError
+                                                           ), AsError)
+import           Level08.Types.CommentText        ( CommentText
+                                                   , mkCommentText
+                                                   , getCommentText
+                                                   )
+import           Level08.Types.Topic              (Topic, mkTopic, getTopic)
 
 newtype CommentId = CommentId Int
   deriving (Show, ToJSON)
@@ -104,31 +108,20 @@ instance ToJSON Comment where
 -- we would be okay with showing someone. However unlikely it may be, this is a
 -- nice method for separating out the back and front end of a web app and
 -- providing greater guarantees about data cleanliness.
-
-fromDBComment
-  :: DBComment
-  -> Either Error Comment
+fromDBComment :: (AsError e) => DBComment -> Either e Comment
 fromDBComment dbc =
   Comment (CommentId     $ dbCommentId dbc)
       <$> (mkTopic       $ dbCommentTopic dbc)
       <*> (mkCommentText $ dbCommentComment dbc)
       <*> (pure          $ dbCommentTime dbc)
 
--- We have to be able to:
--- - Comment on a given topic
--- - View a topic and its comments
--- - List the current topics
---
--- To that end, we have the following types:
---
--- AddRq : Which needs to the target topic, and the body of the comment.
--- ViewRq : Which needs the topic being requested.
--- ListRq : Which lists all of the current topics.
 data RqType
   = AddRq Topic CommentText
   | ViewRq Topic
   | ListRq
 
+-- Provide a type to list our response content types so we don't try to
+-- do the wrong thing with what we meant to be used as text or JSON etc.
 data ContentType
   = PlainText
   | JSON
@@ -143,14 +136,11 @@ renderContentType JSON      = "application/json"
 -- Config Types
 -----------------
 
--- This is an alternative way of defining a `newtype`. You define it as a record
--- with a single field, this provides the unwrapping function for free. When
--- defined using the other method, you must use pattern-matching or write a dedicated
--- function in order to get the value out.
+-- This is an alternative way of defining a `newtype`. You define it as a simple
+-- record and this lets you specify an unwrapping function at the same time. Which
+-- technique you choose is a matter for your specific needs and preference.
 --
 newtype Port = Port
-  -- You will notice we're using ``Word16`` as our type for the ``Port`` value.
-  -- This is because a valid port number can only be a 16bit unsigned integer.
   { getPort :: Word16 }
   deriving (Eq, Show)
 
@@ -158,34 +148,33 @@ newtype DBFilePath = DBFilePath
   { getDBFilePath :: FilePath }
   deriving (Eq, Show)
 
--- Add some fields to the ``Conf`` type:
+-- The ``Conf`` type will need:
 -- - A customisable port number: ``Port``
 -- - A filepath for our SQLite database: ``DBFilePath``
 data Conf = Conf
   { port       :: Port
-  , dBFilePath :: DBFilePath
+  , dbFilePath :: DBFilePath
   }
+  deriving Eq
 
 -- We're storing our Port as a Word16 to be more precise and prevent invalid
 -- values from being used in our application. However Wai is not so stringent.
 -- To accommodate this and make our lives a bit easier, we will write this
 -- helper function to take ``Conf`` value and convert it to an ``Int``.
---
--- We'll need to use a function called; ``fromIntegral``, to convert our
--- ``Word16`` to an ``Int``. The type of this function is:
---
--- fromIntegral :: (Num b, Integral a) => a -> b
---
-confPortToWai :: Conf -> Int
-confPortToWai Conf { port = p } = fromIntegral $ getPort p
+confPortToWai
+  :: Conf
+  -> Int
+confPortToWai =
+  fromIntegral . getPort . port
 
 -- Similar to when we were considering our application types, leave this empty
 -- for now and add to it as you go.
-data ConfigError = MalformedJSON
-                 | IncompleteConfig
-                 | FileNotFound deriving Show
-
-instance Exception ConfigError
+data ConfigError
+  = MissingPort
+  | MissingDBFilePath
+  | JSONDecodeError String
+  | ConfigFileReadError IOError
+  deriving Show
 
 -- Our application will be able to load configuration from both a file and
 -- command line input. We want to be able to use the command line to temporarily
@@ -220,9 +209,9 @@ data PartialConf = PartialConf
 -- to define a Semigroup instance. We define our ``(<>)`` function to lean
 -- on the ``Semigroup`` instance for Last to always get the last value.
 instance Semigroup PartialConf where
-  _a <> _b = PartialConf
-    { pcPort       = (pcPort _a) <> (pcPort _b)
-    , pcDBFilePath = (pcDBFilePath _a) <> (pcDBFilePath _b)
+  a <> b = PartialConf
+    { pcPort       = pcPort a <> pcPort b
+    , pcDBFilePath = pcDBFilePath a <> pcDBFilePath b
     }
 
 -- We now define our ``Monoid`` instance for ``PartialConf``. Allowing us to
@@ -242,9 +231,17 @@ instance Monoid PartialConf where
 -- have to tell aeson how to go about converting the JSON into our PartialConf
 -- data structure.
 instance FromJSON PartialConf where
-  parseJSON = A.withObject "PartialConf" $ \v -> do
-    p <- v .: "port"
-    d <- v .:? "dbLocation"
-    return $ PartialConf (Last . Just . Port $ p) (Last $ DBFilePath <$> d)
+  parseJSON = A.withObject "PartialConf" $ \o -> PartialConf
+    <$> parseToLast "port" Port o
+    <*> parseToLast "dbFilePath" DBFilePath o
+    where
+      parseToLast k c o =
+        Last . fmap c <$> o .:? k
 
--- Go to 'src/Level06/Conf/File.hs' next
+-- We have a data type to simplify passing around the information we need to run
+-- our database queries. This also allows things to change over time without
+-- having to rewrite all of the functions that need to interact with DB related
+-- things in different ways.
+newtype FirstAppDB = FirstAppDB
+  { dbConn  :: Connection
+  }

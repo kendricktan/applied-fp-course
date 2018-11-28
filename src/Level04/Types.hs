@@ -30,15 +30,16 @@ import qualified Data.Aeson.Types          as A
 
 import           Data.Time                 (UTCTime)
 
-import           Level04.DB.Types          (DBComment)
+import           Level04.DB.Types          (DBComment (..))
 
 -- Notice how we've moved these types into their own modules. It's cheap and
 -- easy to add modules to carve out components in a Haskell application. So
 -- whenever you think that a module is too big, covers more than one piece of
 -- distinct functionality, or you want to carve out a particular piece of code,
 -- just spin up another module.
-import           Level04.Types.CommentText (CommentText, getCommentText, mkCommentText)
-import           Level04.Types.Error       (Error (EmptyCommentText, EmptyTopic, UnknownRoute))
+import           Level04.Types.CommentText (CommentText, getCommentText,
+                                            mkCommentText)
+import           Level04.Types.Error       (Error (..))
 import           Level04.Types.Topic       (Topic, getTopic, mkTopic)
 
 
@@ -68,11 +69,8 @@ data Comment = Comment
 -- "topic"
 -- >>> modFieldLabel ""
 -- ""
-modFieldLabel
-  :: String
-  -> String
-modFieldLabel =
-  error "modFieldLabel not implemented"
+modFieldLabel :: String -> String
+modFieldLabel p = maybe p id (stripPrefix "comment" p)
 
 instance ToJSON Comment where
   -- This is one place where we can take advantage of our `Generic` instance.
@@ -94,11 +92,13 @@ instance ToJSON Comment where
 -- that we would be okay with showing someone. However unlikely it may be, this
 -- is a nice method for separating out the back and front end of a web app and
 -- providing greater guarantees about data cleanliness.
-fromDBComment
-  :: DBComment
-  -> Either Error Comment
-fromDBComment =
-  error "fromDBComment not yet implemented"
+fromDBComment :: DBComment -> Either Error Comment
+fromDBComment dbc = (Comment (CommentId i)) <$> (mkTopic t) <*> (mkCommentText b) <*> (pure u)
+  where i = dbCommentId dbc
+        t = dbCommentTopic dbc
+        b = dbCommentBody dbc
+        u = dbCommentTime dbc
+
 
 data RqType
   = AddRq Topic CommentText

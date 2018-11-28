@@ -34,17 +34,22 @@ import qualified Data.Aeson                         as A
 import           Level06.AppM                       (AppM, liftEither, runAppM)
 import qualified Level06.Conf                       as Conf
 import qualified Level06.DB                         as DB
-import           Level06.Types                      (Conf, ContentType (..),
+import           Level06.Types                      (Conf (..),
+                                                     ConfigError (..),
+                                                     ContentType (..),
+                                                     Port (..),
                                                      Error (..),
                                                      RqType (AddRq, ListRq, ViewRq),
+                                                     confPortToWai,
+                                                     getDBFilePath,
                                                      mkCommentText, mkTopic,
                                                      renderContentType)
 
 -- Our start-up is becoming more complicated and could fail in new and
 -- interesting ways. But we also want to be able to capture these errors in a
 -- single type so that we can deal with the entire start-up process as a whole.
-data StartUpError
-  = DBInitErr SQLiteResponse
+data StartUpError = DBInitErr SQLiteResponse
+                  | ConfigError ConfigError
   deriving Show
 
 runApp :: IO ()
@@ -53,8 +58,8 @@ runApp = do
   cfgE <- prepareAppReqs
   -- Loading the configuration can fail, so we have to take that into account now.
   case cfgE of
-    Left err   -> undefined
-    Right _cfg -> run undefined undefined
+    Left err                 -> putStrLn $ "Error: " ++ show err
+    Right (_cfg, firstappdb) -> run (confPortToWai _cfg) (app _cfg firstappdb)
 
 -- We need to complete the following steps to prepare our app requirements:
 --
@@ -64,10 +69,16 @@ runApp = do
 --
 -- The file path for our application config is: "files/appconfig.json"
 --
-prepareAppReqs
-  :: IO ( Either StartUpError ( Conf, DB.FirstAppDB ) )
-prepareAppReqs =
-  error "copy your prepareAppReqs from the previous level."
+prepareAppReqs :: IO ( Either StartUpError ( Conf, DB.FirstAppDB ) )
+prepareAppReqs = do
+  eitherConfg <- Conf.parseOptions "files/level07.json"
+  case eitherConfg of
+    Left err  -> return $ Left (ConfigError err)
+    Right conf -> do
+      eitherFirstappdb <- DB.initDB (getDBFilePath $ dBFilePath conf)
+      case eitherFirstappdb of
+          Left err         -> return $ Left (DBInitErr err)
+          Right firstappdb ->  return $ Right (conf, firstappdb)
 
 -- | Some helper functions to make our lives a little more DRY.
 mkResponse

@@ -10,6 +10,8 @@ import           Level04.Types.Error (Error (EmptyTopic), nonEmptyText)
 import           Data.Aeson          (ToJSON)
 import           Data.Text           (Text)
 
+import           Database.SQLite.Simple.FromRow
+
 newtype Topic = Topic Text
   deriving (Show, ToJSON)
 
@@ -24,3 +26,6 @@ getTopic
   -> Text
 getTopic (Topic t) =
   t
+
+instance FromRow Topic where
+  fromRow = Topic <$> field

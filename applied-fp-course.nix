@@ -1,5 +1,5 @@
 { mkDerivation, aeson, base, bytestring, doctest, hspec, hspec-wai
-, http-types, mtl, optparse-applicative, semigroups, sqlite-simple
+, http-types, lens, mtl, optparse-applicative, semigroups, sqlite-simple
 , sqlite-simple-errors, stdenv, tasty, tasty-hunit, text, time
 , transformers, wai, wai-extra, warp, mmorph
 }:
@@ -10,7 +10,7 @@ mkDerivation {
   isLibrary = true;
   isExecutable = true;
   libraryHaskellDepends = [
-    aeson base bytestring http-types mtl optparse-applicative
+    aeson base bytestring http-types lens mtl optparse-applicative
     semigroups sqlite-simple sqlite-simple-errors text time
     transformers wai warp
   ];
